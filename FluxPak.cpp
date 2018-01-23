@@ -6,7 +6,12 @@
 #include <assert.h>
 #include <algorithm>
 
-FluxPak::PAK_RESULT FluxPak::CreatePakFile(const std::string& responseFilePath, const std::string& targetPath, std::string& virtualDirPath, const PAK_COMPRESSION_QUALITY quality)
+FluxPak::PAK_RESULT FluxPak::CreatePakFile(
+	const std::string& responseFilePath, 
+	const std::string& targetPath, 
+	std::string& virtualDirPath,
+	const int contentVersion,
+	const PAK_COMPRESSION_QUALITY quality)
 {
 	//Open the response file
 	std::ifstream responseFileStream(responseFilePath);
@@ -24,7 +29,8 @@ FluxPak::PAK_RESULT FluxPak::CreatePakFile(const std::string& responseFilePath, 
 	FixPath(virtualDirPath);
 
 	header.NumEntries = 0;
-	header.Version = PAK_FILE_VERSION;
+	header.PakVersion = (char)PAK_FILE_VERSION;
+	header.ContentVersion = contentVersion;
 
 	std::vector<char> dataBuffer;
 	std::vector<PakFileTableEntry> fileEntries;
@@ -51,7 +57,7 @@ FluxPak::PAK_RESULT FluxPak::CreatePakFile(const std::string& responseFilePath, 
 		std::string fileName = filePath.substr(virtualDirPath.size());
 		memcpy(pakFileEntry.FilePath, fileName.data(), fileName.length() + 1);
 		pakFileEntry.Offset = (unsigned int)dataBuffer.size();
-		pakFileEntry.Compressed = pakFileEntry.UncompressedSize > MIN_COMPRESSION_FILE_SIZE;
+		pakFileEntry.Compressed = pakFileEntry.UncompressedSize > (unsigned int)MIN_COMPRESSION_FILE_SIZE;
 		fileStream.seekg(0);
 
 		//Read the file into memory

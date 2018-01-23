@@ -14,7 +14,8 @@ public:
 	struct PakHeader
 	{
 		char ID[4] = { "PAK" };
-		char Version = 0;
+		char PakVersion = 0;
+		int ContentVersion = 0;
 		char FolderPath[100];
 		char PakName[50];
 		unsigned char NumEntries = 0;
@@ -48,27 +49,32 @@ public:
 		HIGHQUALITY,
 	};
 
-	static PAK_RESULT CreatePakFile(const std::string& responseFilePath, const std::string& targetPath, std::string& virtualDirPath, PAK_COMPRESSION_QUALITY quality = PAK_COMPRESSION_QUALITY::DEFAULT);
+	PAK_RESULT CreatePakFile(
+		const std::string& responseFilePath, 
+		const std::string& targetPath, 
+		std::string& virtualDirPath, 
+		const int contentVersion,
+		PAK_COMPRESSION_QUALITY quality);
 
-	static PAK_RESULT LoadFileFromPak(const std::string& pakFilePath, const std::string& fileName, std::vector<char>& outputData);
-	static PAK_RESULT LoadFileFromPak(PakHeader* pHeader, const std::string& fileName, std::vector<char>& outputData);
+	PAK_RESULT LoadFileFromPak(const std::string& pakFilePath, const std::string& fileName, std::vector<char>& outputData);
+	PAK_RESULT LoadFileFromPak(PakHeader* pHeader, const std::string& fileName, std::vector<char>& outputData);
 
-	static PAK_RESULT LoadPakData(const std::string& pakFileName, std::vector<char>& outputData);
+	PAK_RESULT LoadPakData(const std::string& pakFileName, std::vector<char>& outputData);
 
-	static bool IsError(const PAK_RESULT result);
+	bool IsError(const PAK_RESULT result);
 
-	static std::string GetError(const PAK_RESULT result);
+	std::string GetError(const PAK_RESULT result);
 
 private:
-	static std::string GetFileName(const std::string& filePath);
-	static std::string GetDirectoryPath(const std::string& filePath);
-	static void FixPath(std::string& filePath);
+	std::string GetFileName(const std::string& filePath);
+	std::string GetDirectoryPath(const std::string& filePath);
+	void FixPath(std::string& filePath);
 
 	//Minimum file size to compress
-	static const int MIN_COMPRESSION_FILE_SIZE = 1048576;
-	static const int PAK_FILE_VERSION = 1;
+	const int MIN_COMPRESSION_FILE_SIZE = 1048576;
+	const int PAK_FILE_VERSION = 2;
 
-	static PAK_RESULT Decompress(void *pInData, size_t inDataSize, std::vector<char> &outData);
+	PAK_RESULT Decompress(void *pInData, size_t inDataSize, std::vector<char> &outData);
 
-	static PAK_RESULT Compress(void *pInData, size_t inDataSize, std::vector<char> &outData, const PAK_COMPRESSION_QUALITY quality);
+	PAK_RESULT Compress(void *pInData, size_t inDataSize, std::vector<char> &outData, const PAK_COMPRESSION_QUALITY quality);
 };
