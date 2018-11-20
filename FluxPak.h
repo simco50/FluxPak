@@ -28,7 +28,8 @@ public:
 		std::string& virtualDirPath,
 		const int contentVersion,
 		const bool compress,
-		const int minCompressBias);
+		const int minCompressBias,
+		const bool hq);
 
 	bool ExtractPakFile(
 		const std::string& inputPath,
@@ -41,5 +42,5 @@ private:
 	const int PAK_FILE_VERSION = 2;
 
 	bool DecompressLZ4(const void *pInData, size_t compressedSize, size_t uncompressedSize, std::vector<char> &outData);
-	bool CompressLZ4(void *pInData, size_t inDataSize, std::vector<char> &outData);
+	bool CompressLZ4(void *pInData, size_t inDataSize, const bool hc, std::vector<char> &outData);
 };

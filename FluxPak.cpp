@@ -7,6 +7,7 @@
 #include "Paths.h"
 #include <windows.h>
 #include "External/LZ4/lz4.h"
+#include "External/LZ4/lz4hc.h"
 
 bool FluxPak::CreatePakFile(
 	const std::string& responseFilePath,
@@ -14,7 +15,8 @@ bool FluxPak::CreatePakFile(
 	std::string& virtualDirPath,
 	const int contentVersion,
 	const bool compress,
-	const int minCompressBias)
+	const int minCompressBias,
+	const bool hq)
 {
 	//Open the response file
 	std::ifstream responseFileStream(responseFilePath);
@@ -76,7 +78,7 @@ bool FluxPak::CreatePakFile(
 		if (pakFileEntry.Compressed)
 		{
 			std::vector<char> compressedData;
-			bool result = CompressLZ4(fileData.data(), fileData.size(), compressedData);
+			bool result = CompressLZ4(fileData.data(), fileData.size(), hq, compressedData);
 			if (result == false)
 				return result;
 			pakFileEntry.CompressedSize = (unsigned int)compressedData.size();
@@ -165,17 +167,31 @@ bool FluxPak::DecompressLZ4(const void *pInData, size_t compressedSize, size_t u
 	return decompressedSize > 0;
 }
 
-bool FluxPak::CompressLZ4(void *pInData, size_t inDataSize, std::vector<char> &outData)
+bool FluxPak::CompressLZ4(void *pInData, size_t inDataSize, const bool hc, std::vector<char> &outData)
 {
 	const int maxDstSize = LZ4_compressBound((int)inDataSize);
 	outData.resize((size_t)maxDstSize);
 
-	const int compressDataSize = LZ4_compress_default((const char*)pInData, outData.data(), (int)inDataSize, (int)maxDstSize);
-	if (compressDataSize < 0)
+	if (hc)
 	{
-		return false;
-	}
+		const int compressDataSize = LZ4_compress_HC((const char*)pInData, outData.data(), (int)inDataSize, (int)maxDstSize, LZ4HC_CLEVEL_MAX);
+		if (compressDataSize < 0)
+		{
+			return false;
+		}
 
-	outData.resize((size_t)compressDataSize);
+		outData.resize((size_t)compressDataSize);
+	}
+	else
+	{
+		const int compressDataSize = LZ4_compress_default((const char*)pInData, outData.data(), (int)inDataSize, (int)maxDstSize);
+		if (compressDataSize < 0)
+		{
+			return false;
+		}
+
+		outData.resize((size_t)compressDataSize);
+	}
 	return true;
+
 }

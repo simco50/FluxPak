@@ -52,7 +52,8 @@ int main(int argc, char *argv[])
 			baseDirectoryPath,
 			version,
 			compress,
-			minCompressBias);
+			minCompressBias,
+			true);
 	}
 	catch (std::exception e)
 	{
