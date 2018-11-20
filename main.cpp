@@ -14,6 +14,8 @@ int main(int argc, char *argv[])
 		("r, responsefile", "The input response file", cxxopts::value<std::string>())
 		("p, pakfile", "The output pak file", cxxopts::value<std::string>())
 		("b, virtualdir", "The virtual base directory", cxxopts::value<string>())
+		("c, compress", "The content version of the pak file", cxxopts::value<bool>())
+		("m, mincompressbias", "The minimum size of a file for it to be compressed", cxxopts::value<int>())
 		("v, contentversion", "The content version of the pak file", cxxopts::value<int>());
 
 	cxxopts::ParseResult result = options.parse(argc, argv);
@@ -27,8 +29,14 @@ int main(int argc, char *argv[])
 	string pakFileName = result["p"].as<std::string>();
 	string baseDirectoryPath = result["b"].as<string>();
 	int version = 0;
+	int minCompressBias = -1;
 	if (result.count("v"))
 		version = result["v"].as<int>();
+	bool compress = false;
+	if (result.count("c") == 1)
+		compress = true;
+	if(result.count("m"))
+		minCompressBias = result["m"].as<int>();
 
 	LARGE_INTEGER start, end, freq;
 	QueryPerformanceFrequency(&freq);
@@ -36,8 +44,20 @@ int main(int argc, char *argv[])
 
 	FluxPak packer;
 	cout << "Creating pak file..." << endl;
-	FluxPak::PAK_RESULT pakResult = packer.CreatePakFile(responseFilePath, pakFileName, baseDirectoryPath, version, FluxPak::PAK_COMPRESSION_QUALITY::FAST);
-	cout << packer.GetError(pakResult) << endl;
+	try
+	{
+		packer.CreatePakFile(
+			responseFilePath,
+			pakFileName,
+			baseDirectoryPath,
+			version,
+			compress,
+			minCompressBias);
+	}
+	catch (std::exception e)
+	{
+		cout << e.what() << endl;
+	}
 
 	QueryPerformanceCounter(&end);
 	cout << "Pak file created in " << (double)(end.QuadPart - start.QuadPart) / freq.QuadPart << " second(s)"<< endl;

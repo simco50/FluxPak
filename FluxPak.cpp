@@ -2,31 +2,36 @@
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <zlib.h>
 #include <assert.h>
 #include <algorithm>
+#include "Paths.h"
+#include <windows.h>
+#include "External/LZ4/lz4.h"
 
-FluxPak::PAK_RESULT FluxPak::CreatePakFile(
-	const std::string& responseFilePath, 
-	const std::string& targetPath, 
+bool FluxPak::CreatePakFile(
+	const std::string& responseFilePath,
+	const std::string& targetPath,
 	std::string& virtualDirPath,
 	const int contentVersion,
-	const PAK_COMPRESSION_QUALITY quality)
+	const bool compress,
+	const int minCompressBias)
 {
 	//Open the response file
 	std::ifstream responseFileStream(responseFilePath);
 	if (responseFileStream.fail())
-		return PAK_RESULT::ERROR_RESPONSEFILE_NOT_FOUND;
+	{
+		throw std::exception("Failed to open response file");
+	}
 
 	//Create the header
 	PakHeader header = {};
 
-	std::string pakName = GetFileName(targetPath);
-	std::string fileDir = GetDirectoryPath(targetPath);
+	std::string pakName = Paths::GetFileName(targetPath);
+	std::string fileDir = Paths::GetDirectoryPath(targetPath);
 	memcpy(header.PakName, pakName.data(), pakName.length() + 1);
 	memcpy(header.FolderPath, fileDir.data(), fileDir.length() + 1);
 
-	FixPath(virtualDirPath);
+	Paths::FixPath(virtualDirPath);
 
 	header.NumEntries = 0;
 	header.PakVersion = (char)PAK_FILE_VERSION;
@@ -34,6 +39,8 @@ FluxPak::PAK_RESULT FluxPak::CreatePakFile(
 
 	std::vector<char> dataBuffer;
 	std::vector<PakFileTableEntry> fileEntries;
+
+	int compressBias = minCompressBias >= 0 ? minCompressBias : MIN_COMPRESSION_FILE_SIZE;
 
 	//Iterate over all the files in the response file
 	std::string filePath;
@@ -57,7 +64,7 @@ FluxPak::PAK_RESULT FluxPak::CreatePakFile(
 		std::string fileName = filePath.substr(virtualDirPath.size());
 		memcpy(pakFileEntry.FilePath, fileName.data(), fileName.length() + 1);
 		pakFileEntry.Offset = (unsigned int)dataBuffer.size();
-		pakFileEntry.Compressed = pakFileEntry.UncompressedSize > (unsigned int)MIN_COMPRESSION_FILE_SIZE;
+		pakFileEntry.Compressed = (pakFileEntry.UncompressedSize > (unsigned int)compressBias && compress == true);
 		fileStream.seekg(0);
 
 		//Read the file into memory
@@ -69,8 +76,8 @@ FluxPak::PAK_RESULT FluxPak::CreatePakFile(
 		if (pakFileEntry.Compressed)
 		{
 			std::vector<char> compressedData;
-			PAK_RESULT result = Compress(fileData.data(), fileData.size(), compressedData, quality);
-			if (IsError(result))
+			bool result = CompressLZ4(fileData.data(), fileData.size(), compressedData);
+			if (result == false)
 				return result;
 			pakFileEntry.CompressedSize = (unsigned int)compressedData.size();
 			dataBuffer.insert(dataBuffer.end(), compressedData.data(), compressedData.data() + compressedData.size());
@@ -110,235 +117,65 @@ FluxPak::PAK_RESULT FluxPak::CreatePakFile(
 
 	output.close();
 
-	return PAK_RESULT::OK;
+	return true;
 }
 
-FluxPak::PAK_RESULT FluxPak::LoadFileFromPak(const std::string& pakFilePath, const std::string& fileName, std::vector<char>& outputData)
+bool FluxPak::ExtractPakFile(const std::string& inputPath, const std::string& outputPath)
 {
-	std::vector<char> pakFile;
+	std::ifstream pakFile(inputPath, std::ios::binary);
+	if (pakFile.fail())
+		throw std::exception("Failed to open pak file");
+	PakHeader header;
+	pakFile.read(reinterpret_cast<char*>(&header), sizeof(PakHeader));
+	if (std::string(header.ID) != "PAK")
+		throw std::exception("Pak file is of bad format");
+	PakFileTableEntry* pEntries = new PakFileTableEntry[header.NumEntries];
+	pakFile.read(reinterpret_cast<char*>(pEntries), sizeof(PakFileTableEntry) * header.NumEntries);
 
-	PAK_RESULT result = LoadPakData(pakFilePath, pakFile);;
-	if (IsError(result))
-		return result;
-	
-	PakHeader* pHeader = reinterpret_cast<PakHeader*>(pakFile.data());
-	return LoadFileFromPak(pHeader, fileName, outputData);
-}
-
-FluxPak::PAK_RESULT FluxPak::LoadFileFromPak(FluxPak::PakHeader* pHeader, const std::string& fileName, std::vector<char>& outputData)
-{
-	PakFileTableEntry* pEntry = reinterpret_cast<PakFileTableEntry*>(reinterpret_cast<char*>(pHeader) + sizeof(PakHeader));
-	for (unsigned char i = 0; i < pHeader->NumEntries; ++i)
+	for (int i = 0; i < header.NumEntries ; i++)
 	{
-		if (strcmp(pEntry->FilePath, fileName.c_str()) != 0)
+		PakFileTableEntry& entry = pEntries[i];
+		//pakFile.seekg(entry.Offset);
+		std::vector<char> buffer;
+		if (entry.Compressed)
 		{
-			if (i == pHeader->NumEntries - 1)
-				return PAK_RESULT::ERROR_FILE_NOT_FOUND;
-
-			pEntry = reinterpret_cast<PakFileTableEntry*>(reinterpret_cast<char*>(pEntry) + sizeof(PakFileTableEntry));
+			std::vector<char> compressedBuffer(entry.CompressedSize);
+			pakFile.read(buffer.data(), buffer.size());
+			if (!DecompressLZ4(compressedBuffer.data(), compressedBuffer.size(), entry.UncompressedSize, buffer))
+				throw std::exception("Failed to decompress file");
 		}
 		else
-			break;
-	}
-
-	char* pData = reinterpret_cast<char*>(pHeader) + pEntry->Offset + sizeof(PakHeader) + pHeader->NumEntries * sizeof(PakFileTableEntry);
-	if (pEntry->Compressed)
-	{
-		PAK_RESULT result = Decompress(pData, pEntry->CompressedSize, outputData);
-		if (IsError(result))
-			return result;
-	}
-	else
-	{
-		outputData.resize(pEntry->UncompressedSize);
-		memcpy(outputData.data(), pData, pEntry->UncompressedSize);
-	}
-	return PAK_RESULT::OK;
-}
-
-FluxPak::PAK_RESULT FluxPak::LoadPakData(const std::string& pakFileName, std::vector<char>& outputData)
-{
-	std::ifstream fileStream(pakFileName, std::ios::ate | std::ios::binary);
-	if (fileStream.fail())
-		return PAK_RESULT::ERROR_FILE_TOO_LARGE;
-	size_t size = (size_t)fileStream.tellg();
-	outputData.resize(size);
-	fileStream.seekg(0);
-	fileStream.read(outputData.data(), size);
-	return PAK_RESULT::OK;
-}
-
-std::string FluxPak::GetFileName(const std::string& filePath)
-{
-	size_t slashPos = filePath.rfind('/');
-	size_t dotPos = filePath.rfind('.');
-	if (slashPos == std::string::npos)
-	{
-		if (dotPos == std::string::npos)
-			return filePath;
-		return filePath.substr(0, dotPos);
-	}
-	if (dotPos == std::string::npos)
-		return filePath.substr(slashPos + 1);
-	return filePath.substr(slashPos + 1, dotPos - slashPos - 1);
-}
-
-std::string FluxPak::GetDirectoryPath(const std::string& filePath)
-{
-	size_t slashPos = filePath.rfind('/');
-	if (slashPos == std::string::npos)
-		return filePath;
-	return filePath.substr(0, slashPos);
-}
-
-void FluxPak::FixPath(std::string& filePath)
-{
-	replace(filePath.begin(), filePath.end(), '\\', '/');
-}
-
-FluxPak::PAK_RESULT FluxPak::Decompress(void *pInData, size_t inDataSize, std::vector<char> &outData)
-{
-	const size_t BUFSIZE = 128 * 1024;
-	unsigned char temp_buffer[BUFSIZE];
-
-	z_stream strm;
-	strm.zalloc = 0;
-	strm.zfree = 0;
-	strm.next_in = reinterpret_cast<unsigned char*>(pInData);
-	strm.avail_in = (uInt)inDataSize;
-	strm.next_out = temp_buffer;
-	strm.avail_out = BUFSIZE;
-
-	inflateInit(&strm);
-
-	while (strm.avail_in != 0)
-	{
-		int res = inflate(&strm, Z_NO_FLUSH);
-		if (res != Z_OK && res != Z_STREAM_END)
 		{
-			return PAK_RESULT::ERROR_DECOMPRESSION;
+			buffer.resize(entry.UncompressedSize);
+			pakFile.read(buffer.data(), buffer.size());
 		}
-		if (strm.avail_out == 0)
-		{
-			outData.insert(outData.end(), temp_buffer, temp_buffer + BUFSIZE);
-			strm.next_out = temp_buffer;
-			strm.avail_out = BUFSIZE;
-		}
+		CreateDirectoryA((outputPath + Paths::GetDirectoryPath(entry.FilePath)).c_str(), nullptr);
+		std::ofstream outputStream(outputPath + entry.FilePath, std::ios::binary);
+		if (outputStream.fail())
+			throw std::exception("Failed to create file");
+		outputStream.write(buffer.data(), buffer.size());
 	}
-
-	int deflate_res = Z_OK;
-	while (deflate_res == Z_OK)
-	{
-		if (strm.avail_out == 0)
-		{
-			outData.insert(outData.end(), temp_buffer, temp_buffer + BUFSIZE);
-			strm.next_out = temp_buffer;
-			strm.avail_out = BUFSIZE;
-		}
-		deflate_res = inflate(&strm, Z_FINISH);
-	}
-
-	if (deflate_res != Z_STREAM_END)
-	{
-		return PAK_RESULT::ERROR_DECOMPRESSION;
-	}
-
-	outData.insert(outData.end(), temp_buffer, temp_buffer + BUFSIZE - strm.avail_out);
-	inflateEnd(&strm);
-
-	return PAK_RESULT::OK;
+	return true;
 }
 
-FluxPak::PAK_RESULT FluxPak::Compress(void *pInData, size_t inDataSize, std::vector<char> &outData, const PAK_COMPRESSION_QUALITY quality)
+bool FluxPak::DecompressLZ4(const void *pInData, size_t compressedSize, size_t uncompressedSize, std::vector<char> &outData)
 {
-	const size_t BUFSIZE = 128 * 1024;
-	unsigned char temp_buffer[BUFSIZE];
-
-	z_stream strm;
-	strm.zalloc = 0;
-	strm.zfree = 0;
-	strm.next_in = reinterpret_cast<unsigned char*>(pInData);
-	strm.avail_in = (uInt)inDataSize;
-	strm.next_out = temp_buffer;
-	strm.avail_out = BUFSIZE;
-
-	switch (quality)
-	{
-	case PAK_COMPRESSION_QUALITY::FAST:
-		deflateInit(&strm, Z_BEST_SPEED);
-		break;
-	case PAK_COMPRESSION_QUALITY::HIGHQUALITY:
-		deflateInit(&strm, Z_BEST_COMPRESSION);
-		break;
-	case PAK_COMPRESSION_QUALITY::DEFAULT:
-	default:
-		deflateInit(&strm, Z_DEFAULT_COMPRESSION);
-		break;
-	}
-
-	while (strm.avail_in != 0)
-	{
-		int res = deflate(&strm, Z_NO_FLUSH);
-		if (res != Z_OK)
-		{
-			return PAK_RESULT::ERROR_COMPRESSION;
-		}
-
-		if (strm.avail_out == 0)
-		{
-			outData.insert(outData.end(), temp_buffer, temp_buffer + BUFSIZE);
-			strm.next_out = temp_buffer;
-			strm.avail_out = BUFSIZE;
-		}
-	}
-
-	int deflate_res = Z_OK;
-	while (deflate_res == Z_OK)
-	{
-		if (strm.avail_out == 0)
-		{
-			outData.insert(outData.end(), temp_buffer, temp_buffer + BUFSIZE);
-			strm.next_out = temp_buffer;
-			strm.avail_out = BUFSIZE;
-		}
-		deflate_res = deflate(&strm, Z_FINISH);
-	}
-
-	if (deflate_res != Z_STREAM_END)
-	{
-		return PAK_RESULT::ERROR_COMPRESSION;
-	}
-
-	outData.insert(outData.end(), temp_buffer, temp_buffer + BUFSIZE - strm.avail_out);
-	deflateEnd(&strm);
-
-	return PAK_RESULT::OK;
+	outData.resize(uncompressedSize);
+	const int decompressedSize = LZ4_decompress_safe((const char*)pInData, outData.data(), (int)compressedSize, (int)uncompressedSize);
+	return decompressedSize > 0;
 }
 
-bool FluxPak::IsError(const PAK_RESULT result)
+bool FluxPak::CompressLZ4(void *pInData, size_t inDataSize, std::vector<char> &outData)
 {
-	return (int)result < 0;
-}
+	const int maxDstSize = LZ4_compressBound((int)inDataSize);
+	outData.resize((size_t)maxDstSize);
 
-std::string FluxPak::GetError(const PAK_RESULT result)
-{
-	switch (result)
+	const int compressDataSize = LZ4_compress_default((const char*)pInData, outData.data(), (int)inDataSize, (int)maxDstSize);
+	if (compressDataSize < 0)
 	{
-	case PAK_RESULT::OK:
-		return "Success";
-	case PAK_RESULT::ERROR_RESPONSEFILE_NOT_FOUND:
-		return "Response file not found";
-	case PAK_RESULT::ERROR_COMPRESSION:
-		return "Zlib compression failed";
-	case PAK_RESULT::ERROR_DECOMPRESSION:
-		return "Zlib decompression failed";
-	case PAK_RESULT::ERROR_FILE_TOO_LARGE:
-		return "File is too large";
-	case PAK_RESULT::ERROR_FILE_NOT_FOUND:
-		return "File not found";
-	case PAK_RESULT::ERROR_PAK_NOT_FOUND:
-		return "Pak not found";
-	default:
-		return "Unknown error";
+		return false;
 	}
+
+	outData.resize((size_t)compressDataSize);
+	return true;
 }

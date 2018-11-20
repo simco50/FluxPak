@@ -19,10 +19,6 @@ workspace "FluxPak"
 	 	flags {  }
 	 	symbols "On"
 	 	optimize "Off"
-	 	postbuildcommands
-		{ 
-			"copy \"$(ProjectDir)\\Libraries\\Zlib\\bin\\%{cfg.platform}\\zlib_DEBUG.dll\" \"$(OutDir)\" /y /D",
-		}
 
 	filter { "configurations:Release" }
 	 	runtime "Release"
@@ -30,10 +26,6 @@ workspace "FluxPak"
 	 	flags {  }
 	 	symbols "Off"
 	 	optimize "Full"
-	 	postbuildcommands
-		{ 
-			"copy \"$(ProjectDir)\\Libraries\\Zlib\\bin\\%{cfg.platform}\\zlib.dll\" \"$(OutDir)\" /y /D",
-		}
 
 	project "PakFileCompression"
 		filename "FluxPak_%{_ACTION}"
@@ -52,19 +44,9 @@ workspace "FluxPak"
 			"../**.h",
 			"../**.hpp",
 			"../**.cpp",
-			"../**.inl"
+			"../**.inl",
+			"../**.c"
 		}
-
-		includedirs 
-		{ 
-			"$(ProjectDir)",
-			"..\\Libraries\\Zlib\\include"
-		}
-
-		libdirs
-		{
-			"..\\Libraries\\Zlib\\lib\\%{cfg.platform}"
-		}	
 
 newaction {
 		trigger     = "clean",
